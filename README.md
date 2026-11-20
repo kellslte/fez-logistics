@@ -3,7 +3,7 @@
 Go client for the [Fez Delivery Business API](https://fez-delivery-co.gitbook.io/fezcorporate-api-docs) — auth, local & international orders, pricing, hubs/states, lockers, users and webhooks.
 
 ```go
-import fez "github.com/scwar/fez-logistics"
+import fez "github.com/kellslte/fez-logistics"
 
 c := fez.New()                       // sandbox; fez.WithBaseURL(prod) for production
 _, err := c.Authenticate(ctx, userID, password) // stores token + secret-key

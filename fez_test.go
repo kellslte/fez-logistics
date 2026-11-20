@@ -53,3 +53,10 @@ func TestWebhookVerify(t *testing.T) {
 		t.Fatal("bad sig accepted")
 	}
 }
+
+func TestWebhookEmptyKeyRejected(t *testing.T) {
+	ev := WebhookEvent{OrderNumber: "O1", Status: "Delivered"}
+	if VerifyWebhook("", ev, "1", Sign("", "O1", "Delivered", "1"), 0) == nil {
+		t.Fatal("empty key accepted")
+	}
+}

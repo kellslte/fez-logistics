@@ -26,6 +26,9 @@ func Sign(secretKey, orderNo, status, timestamp string) string {
 
 // VerifyWebhook checks signature and timestamp freshness (maxAge<=0 skips age check).
 func VerifyWebhook(secretKey string, ev WebhookEvent, timestamp, signature string, maxAge time.Duration) error {
+	if secretKey == "" || signature == "" {
+		return errors.New("fez: missing secret key or signature")
+	}
 	if maxAge > 0 {
 		ts, err := strconv.ParseInt(timestamp, 10, 64)
 		if err != nil {
@@ -44,7 +47,11 @@ func VerifyWebhook(secretKey string, ev WebhookEvent, timestamp, signature strin
 
 // WebhookHandler returns an http.Handler that verifies Fez's signature (5 min
 // tolerance) and calls fn. It replies 200 on success, 401 on bad signature.
+// It panics if secretKey is empty (fail closed).
 func WebhookHandler(secretKey string, fn func(WebhookEvent)) http.Handler {
+	if secretKey == "" {
+		panic("fez: WebhookHandler requires a non-empty secretKey")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var ev WebhookEvent
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&ev); err != nil {
