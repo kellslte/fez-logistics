@@ -27,3 +27,6 @@ Auth: Authenticate, Logout, ChangePassword · Orders: CreateOrders, UpdateOrders
 - Update's sample URL is `/order/multiple`; the endpoint header says `PUT /order` (used).
 - Webhook signature is assumed HMAC-SHA256(secretKey, orderNo+status+timestamp).
 - Import sample misspells `qunatity`; the field table says `quantity` (used).
+
+## Releasing
+`scripts/bump.sh patch|minor|major [--push]` runs vet+tests, updates `Version` in `version.go`, commits and tags `vX.Y.Z`. `fez.Version` is also sent in the `User-Agent`.

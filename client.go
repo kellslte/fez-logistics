@@ -32,6 +32,7 @@ type Client struct {
 	token     string
 	secretKey string
 	expires   string
+	userID    string
 }
 
 // Option configures a Client.
@@ -112,6 +113,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, que
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "fez-logistics-go/"+Version)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

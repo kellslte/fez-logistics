@@ -20,16 +20,30 @@ func (c *Client) Authenticate(ctx context.Context, userID, password string) (*Au
 		return nil, err
 	}
 	c.mu.Lock()
-	c.token, c.secretKey, c.expires = r.AuthDetails.AuthToken, r.OrgDetails.SecretKey, r.AuthDetails.ExpireToken
+	c.token, c.secretKey, c.expires, c.userID = r.AuthDetails.AuthToken, r.OrgDetails.SecretKey, r.AuthDetails.ExpireToken, r.UserDetails.UserID
 	c.mu.Unlock()
 	return &r, nil
 }
 
+// Logout invalidates the session. userID is the internal id returned by
+// Authenticate (UserDetails.UserID, e.g. "G-xxxx-xxxx"), NOT the login
+// identifier you authenticated with. Pass "" to use the one stored by Authenticate.
 func (c *Client) Logout(ctx context.Context, userID string) error {
+	if userID == "" {
+		c.mu.RLock()
+		userID = c.userID
+		c.mu.RUnlock()
+	}
 	return c.do(ctx, http.MethodPost, "/user/logout", map[string]string{"user_id": userID}, nil, false)
 }
 
+// ChangePassword: userID is the internal id (see Logout); "" uses the stored one.
 func (c *Client) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
+	if userID == "" {
+		c.mu.RLock()
+		userID = c.userID
+		c.mu.RUnlock()
+	}
 	return c.do(ctx, http.MethodPost, "/user/changePassword", map[string]string{
 		"user_id": userID, "oldPassword": oldPassword, "newPassword": newPassword}, nil, false)
 }
