@@ -15,18 +15,55 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
 
-// SandboxURL is the documented development base URL. The production base URL
-// is not published in the docs; pass it with WithBaseURL.
-const SandboxURL = "https://apisandbox.fezdelivery.co/v1"
+// Base URLs for each environment.
+const (
+	SandboxURL    = "https://apisandbox.fezdelivery.co/v1"
+	ProductionURL = "https://api.fezdelivery.co/v1"
+)
+
+// Environment selects which Fez API the client targets.
+type Environment string
+
+const (
+	Sandbox    Environment = "sandbox"
+	Production Environment = "production"
+)
+
+// BaseURL returns the API base URL for the environment ("" if unknown).
+func (e Environment) BaseURL() string {
+	switch e {
+	case Sandbox:
+		return SandboxURL
+	case Production:
+		return ProductionURL
+	}
+	return ""
+}
+
+// ParseEnvironment converts a string such as an env var ("sandbox",
+// "production", case-insensitive; "prod" and "dev" accepted) to an Environment.
+func ParseEnvironment(s string) (Environment, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "sandbox", "dev", "development", "test":
+		return Sandbox, nil
+	case "production", "prod", "live":
+		return Production, nil
+	}
+	return "", fmt.Errorf("fez: unknown environment %q (want sandbox or production)", s)
+}
 
 // Client talks to the Fez API. Safe for concurrent use.
 type Client struct {
+	env     Environment
 	baseURL string
 	http    *http.Client
+	cfgErr  error
+	urlSet  bool
 
 	mu        sync.RWMutex
 	token     string
@@ -38,20 +75,40 @@ type Client struct {
 // Option configures a Client.
 type Option func(*Client)
 
-func WithBaseURL(u string) Option          { return func(c *Client) { c.baseURL = u } }
+// WithEnvironment targets Sandbox (the default) or Production. An unknown
+// value makes every call fail rather than silently using another environment.
+func WithEnvironment(e Environment) Option {
+	return func(c *Client) {
+		if u := e.BaseURL(); u != "" {
+			c.env = e
+			if !c.urlSet {
+				c.baseURL = u
+			}
+		} else {
+			c.cfgErr = fmt.Errorf("fez: unknown environment %q (want sandbox or production)", e)
+		}
+	}
+}
+
+// WithBaseURL overrides the base URL (e.g. a proxy or test server); it takes
+// precedence over WithEnvironment regardless of option order.
+func WithBaseURL(u string) Option          { return func(c *Client) { c.baseURL, c.urlSet = u, true } }
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
 func WithCredentials(token, secretKey string) Option {
 	return func(c *Client) { c.token, c.secretKey = token, secretKey }
 }
 
-// New returns a client pointed at the sandbox unless WithBaseURL is given.
+// New returns a client targeting Sandbox unless WithEnvironment/WithBaseURL say otherwise.
 func New(opts ...Option) *Client {
-	c := &Client{baseURL: SandboxURL, http: &http.Client{Timeout: 30 * time.Second}}
+	c := &Client{env: Sandbox, baseURL: SandboxURL, http: &http.Client{Timeout: 30 * time.Second}}
 	for _, o := range opts {
 		o(c)
 	}
 	return c
 }
+
+// Environment reports the targeted environment.
+func (c *Client) Environment() Environment { return c.env }
 
 // SetCredentials sets the bearer token and organisation secret key manually.
 func (c *Client) SetCredentials(token, secretKey string) {
@@ -88,6 +145,9 @@ type Envelope struct {
 // body fields are ALSO sent as URL query parameters (for GET endpoints the docs
 // describe with a request body).
 func (c *Client) do(ctx context.Context, method, path string, body, out any, query bool) error {
+	if c.cfgErr != nil {
+		return c.cfgErr
+	}
 	var rdr io.Reader
 	var raw []byte
 	if body != nil {

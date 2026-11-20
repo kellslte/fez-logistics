@@ -5,7 +5,7 @@ Go client for the [Fez Delivery Business API](https://fez-delivery-co.gitbook.io
 ```go
 import fez "github.com/kellslte/fez-logistics"
 
-c := fez.New()                       // sandbox; fez.WithBaseURL(prod) for production
+c := fez.New(fez.WithEnvironment(fez.Production)) // default is fez.Sandbox
 _, err := c.Authenticate(ctx, userID, password) // stores token + secret-key
 res, err := c.CreateOrders(ctx, []fez.CreateOrder{{
     RecipientName: "Femi", RecipientPhone: "0800...", RecipientAddress: "Idumota",
@@ -13,6 +13,8 @@ res, err := c.CreateOrders(ctx, []fez.CreateOrder{{
 }})
 // res.OrderNos["ord-1"] -> Fez order number
 ```
+
+Environment: `fez.Sandbox` (default, `https://apisandbox.fezdelivery.co/v1`) or `fez.Production` (`https://api.fezdelivery.co/v1`). From config: `env, err := fez.ParseEnvironment(os.Getenv("FEZ_ENV"))`. `WithBaseURL` overrides both. An unknown environment makes calls fail instead of falling back.
 
 Webhooks: `c.RegisterWebhook(ctx, url)`, then serve `fez.WebhookHandler(secretKey, func(ev fez.WebhookEvent){...})`.
 
@@ -22,7 +24,6 @@ Auth: Authenticate, Logout, ChangePassword · Orders: CreateOrders, UpdateOrders
 
 ## Doc ambiguities (unverified against a live account)
 
-- Production base URL isn't published; only sandbox is built in.
 - `ExportDeliveryCost` is documented as GET but sampled as POST; params go in query and body.
 - Update's sample URL is `/order/multiple`; the endpoint header says `PUT /order` (used).
 - Webhook signature is assumed HMAC-SHA256(secretKey, orderNo+status+timestamp).

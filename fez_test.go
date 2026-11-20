@@ -60,3 +60,28 @@ func TestWebhookEmptyKeyRejected(t *testing.T) {
 		t.Fatal("empty key accepted")
 	}
 }
+
+func TestEnvironment(t *testing.T) {
+	if c := New(); c.Environment() != Sandbox || c.baseURL != "https://apisandbox.fezdelivery.co/v1" {
+		t.Fatal("default must be sandbox", c.baseURL)
+	}
+	if c := New(WithEnvironment(Production)); c.Environment() != Production || c.baseURL != "https://api.fezdelivery.co/v1" {
+		t.Fatal(c.baseURL)
+	}
+	// WithBaseURL wins regardless of order
+	if c := New(WithBaseURL("http://x"), WithEnvironment(Production)); c.baseURL != "http://x" {
+		t.Fatal(c.baseURL)
+	}
+	// unknown environment fails closed, never hits the network
+	if _, err := New(WithEnvironment("staging")).States(context.Background()); err == nil {
+		t.Fatal("unknown env accepted")
+	}
+	for in, want := range map[string]Environment{"Production": Production, "prod": Production, "SANDBOX": Sandbox, " dev ": Sandbox} {
+		if got, err := ParseEnvironment(in); err != nil || got != want {
+			t.Fatal(in, got, err)
+		}
+	}
+	if _, err := ParseEnvironment("staging"); err == nil {
+		t.Fatal("bad env parsed")
+	}
+}
