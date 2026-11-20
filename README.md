@@ -17,9 +17,11 @@ res, err := c.CreateOrders(ctx, []fez.CreateOrder{{
 Webhooks: `c.RegisterWebhook(ctx, url)`, then serve `fez.WebhookHandler(secretKey, func(ev fez.WebhookEvent){...})`.
 
 ## Coverage (all 30 documented endpoints (plus the inbound webhook))
+
 Auth: Authenticate, Logout, ChangePassword · Orders: CreateOrders, UpdateOrders, DeleteOrder, CancelOrder, GetOrder, ManifestURL, SearchOrders, SearchByWaybill, OrderStats, TrackOrder, DeliveryCost, DeliveryTimeEstimate, States, Hubs · International: CreateExportOrders, CreateImportOrders, ExportDeliveryCost, ImportDeliveryCost, ExportLocations, ImportLocations, ImportItemCategories · Lockers: Lockers, LockerAvailable · Users: CreateUser, DeleteUser, Users · Webhooks: RegisterWebhook, Sign/VerifyWebhook/WebhookHandler.
 
 ## Doc ambiguities (unverified against a live account)
+
 - Production base URL isn't published; only sandbox is built in.
 - `ExportDeliveryCost` is documented as GET but sampled as POST; params go in query and body.
 - Update's sample URL is `/order/multiple`; the endpoint header says `PUT /order` (used).

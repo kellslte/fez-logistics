@@ -63,7 +63,10 @@ type CreateOrder struct {
 // CreateOrdersResponse maps your uniqueID to the Fez order number.
 type CreateOrdersResponse struct {
 	Envelope
-	OrderNos map[string]string `json:"orderNos"`
+	// OrderNos maps uniqueID -> Fez order number. On failure the values are
+	// per-order error messages instead (e.g. insufficient wallet balance).
+	OrderNos           map[string]string `json:"orderNos"`
+	DuplicateUniqueIDs []string          `json:"duplicateUniqueIds"`
 }
 
 // UpdateOrder updates recipient details of an existing order.

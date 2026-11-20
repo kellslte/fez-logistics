@@ -2,6 +2,7 @@ package fez
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 )
@@ -37,7 +38,7 @@ func (c *Client) ChangePassword(ctx context.Context, userID, oldPassword, newPas
 
 func (c *Client) CreateOrders(ctx context.Context, orders []CreateOrder) (*CreateOrdersResponse, error) {
 	var r CreateOrdersResponse
-	return &r, c.do(ctx, http.MethodPost, "/order", orders, &r, false)
+	return c.keepBody(&r, c.do(ctx, http.MethodPost, "/order", orders, &r, false))
 }
 
 func (c *Client) UpdateOrders(ctx context.Context, orders []UpdateOrder) (*UpdateOrdersResponse, error) {
@@ -123,12 +124,12 @@ func (c *Client) Hubs(ctx context.Context, stateID int) ([]Hub, error) {
 
 func (c *Client) CreateExportOrders(ctx context.Context, orders []ExportOrder) (*CreateOrdersResponse, error) {
 	var r CreateOrdersResponse
-	return &r, c.do(ctx, http.MethodPost, "/orders/export", orders, &r, false)
+	return c.keepBody(&r, c.do(ctx, http.MethodPost, "/orders/export", orders, &r, false))
 }
 
 func (c *Client) CreateImportOrders(ctx context.Context, orders []ImportOrder) (*CreateOrdersResponse, error) {
 	var r CreateOrdersResponse
-	return &r, c.do(ctx, http.MethodPost, "/orders/import", orders, &r, false)
+	return c.keepBody(&r, c.do(ctx, http.MethodPost, "/orders/import", orders, &r, false))
 }
 
 // ExportDeliveryCost: docs list GET with a body (their sample uses POST).
@@ -197,4 +198,15 @@ func (c *Client) Users(ctx context.Context) ([]User, error) {
 func (c *Client) RegisterWebhook(ctx context.Context, webhookURL string) (*RegisterWebhookResponse, error) {
 	var r RegisterWebhookResponse
 	return &r, c.do(ctx, http.MethodPost, "/webhooks/store", map[string]string{"webhook": webhookURL}, &r, false)
+}
+
+// keepBody: on an APIError from a create call the API still returns per-order
+// results in orderNos (e.g. "Insufficient wallet balance..."). Decode them into
+// r so callers get both the error and the per-order messages.
+func (c *Client) keepBody(r *CreateOrdersResponse, err error) (*CreateOrdersResponse, error) {
+	if ae, ok := err.(*APIError); ok {
+		_ = json.Unmarshal([]byte(ae.Body), r)
+		return r, err
+	}
+	return r, err
 }
