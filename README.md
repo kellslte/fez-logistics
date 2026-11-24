@@ -108,7 +108,8 @@ Everything below was observed against the **real sandbox** and in several places
 | 11 | `DeliveryTimeEstimate` works with params in the query string **and** body; `ExportDeliveryCost` is documented as GET with a body. | Both are sent in query + body. | — |
 | 12 | `ManifestURL` returns 404 *"Manifest is not available"* until Fez generates one. | Returned as `*APIError`. | Treat 404 as "not yet". |
 | 13 | Orders can only be cancelled while `Pending Pick-Up`, `Pending Payment`, `Pending Drop-off`, `Dropped-off`, `Rejected At Drop-off` or `Failed Pick-Up`. Cancelling refunds the business wallet. | `CancelOrder` | Handle the 400 for later statuses. |
-| 14 | Money and weight fields arrive as strings **or** numbers. | `fez.Number` (= `json.Number`) decodes both. | Use `.String()`/`.Float64()`. |
+| 14 | **The webhook URL shown on the dashboard is separate from the one `RegisterWebhook` sets.** After a successful API registration the sandbox dashboard still showed the old URL. | — | Set and confirm the URL **in the dashboard**; treat `RegisterWebhook` as unproven until a delivery is seen. |
+| 15 | Money and weight fields arrive as strings **or** numbers. | `fez.Number` (= `json.Number`) decodes both. | Use `.String()`/`.Float64()`. |
 
 ### Not yet verified against real Fez traffic
 

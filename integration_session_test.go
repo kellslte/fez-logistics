@@ -9,8 +9,8 @@ import (
 
 // Tests Logout and RegisterWebhook. Mutates sandbox account state:
 //   - Logout invalidates the session token (then we verify it is rejected).
-//   - RegisterWebhook REPLACES the org's webhook with FEZ_TEST_WEBHOOK_URL
-//     (default https://example.com/fez-webhook-test); there is no read/delete API.
+//   - RegisterWebhook (only if FEZ_TEST_WEBHOOK_URL is set) REPLACES the org's
+//     webhook; there is no read/delete API.
 //
 // Runs only with FEZ_WRITE_TESTS=1.
 func TestSandboxSession(t *testing.T) {
@@ -26,18 +26,20 @@ func TestSandboxSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hook := os.Getenv("FEZ_TEST_WEBHOOK_URL")
-	if hook == "" {
-		hook = "https://example.com/fez-webhook-test"
+	// RegisterWebhook overwrites the account's webhook, so only run it when a
+	// URL is given explicitly (never clobber a URL you set on the dashboard).
+	if hook := os.Getenv("FEZ_TEST_WEBHOOK_URL"); hook == "" {
+		t.Log("skipping RegisterWebhook: set FEZ_TEST_WEBHOOK_URL to test it")
+	} else {
+		r, err := c.RegisterWebhook(ctx, hook)
+		if err != nil {
+			t.Fatalf("RegisterWebhook: %v", err)
+		}
+		if r.Data.Webhook != hook {
+			t.Errorf("webhook = %q want %q", r.Data.Webhook, hook)
+		}
+		t.Logf("RegisterWebhook ok: %+v", r.Data)
 	}
-	r, err := c.RegisterWebhook(ctx, hook)
-	if err != nil {
-		t.Fatalf("RegisterWebhook: %v", err)
-	}
-	if r.Data.Webhook != hook {
-		t.Errorf("webhook = %q want %q", r.Data.Webhook, hook)
-	}
-	t.Logf("RegisterWebhook ok: %+v", r.Data)
 
 	if err := c.Logout(ctx, ""); err != nil {
 		t.Fatalf("Logout: %v", err)
