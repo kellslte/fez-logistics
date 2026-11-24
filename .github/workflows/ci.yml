@@ -20,6 +20,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         go: ["1.21", "stable"]
+        exclude:
+          # Go 1.21 binaries abort on current macOS runners (dyld: missing LC_UUID);
+          # a toolchain/OS incompatibility, not a package bug.
+          - os: macos-latest
+            go: "1.21"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
