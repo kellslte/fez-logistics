@@ -86,6 +86,17 @@ func TestSandboxWrite(t *testing.T) {
 		step("CancelOrder", c.CancelOrder(ctx, orderNo, "sdk integration test"))
 		cancelled = true
 
+		// --- interstate (Lagos -> FCT) ---
+		uid3 := uid + "-is"
+		if cr3, err := c.CreateOrders(ctx, []CreateOrder{{RecipientAddress: "5 Aminu Kano Crescent, Wuse 2", RecipientState: "FCT", RecipientName: "Interstate Test",
+			RecipientPhone: "08000000000", UniqueID: uid3, BatchID: "gotest-b-" + run, ValueOfItem: "5000", Weight: 1, PickUpState: "Lagos"}}); step("CreateOrders(interstate)", err) {
+			no3 := cr3.OrderNos[uid3]
+			if g, err := c.GetOrder(ctx, no3); step("GetOrder(interstate)", err) && g.OrderDetails[0].RecipientState != "FCT" {
+				t.Errorf("recipientState = %q", g.OrderDetails[0].RecipientState)
+			}
+			step("CancelOrder(interstate)", c.CancelOrder(ctx, no3, "sdk test"))
+		}
+
 		// --- DeleteOrder on a second order ---
 		uid2 := uid + "-del"
 		if cr2, err := c.CreateOrders(ctx, []CreateOrder{{RecipientAddress: "1 Del St", RecipientState: "Lagos", RecipientName: "Del", RecipientPhone: "08000000000", UniqueID: uid2, BatchID: "gotest-b-" + run, ValueOfItem: "1000", Weight: 1}}); step("CreateOrders(2)", err) {

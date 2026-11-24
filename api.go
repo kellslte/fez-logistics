@@ -62,6 +62,28 @@ func (c *Client) UpdateOrder(ctx context.Context, o UpdateOrder) error {
 	return c.do(ctx, http.MethodPut, "/order", o, nil, false)
 }
 
+// UpdateOrderKeepWaybill updates an order by its Fez order number and makes sure
+// currentWaybill stays attached to it. Verified against the sandbox: an update
+// without a waybill clears it, and the unchanged waybill cannot be sent in the
+// same request, so this sends the field update first and then re-attaches it.
+//   - o.WaybillNumber set: a single request that changes the waybill to that value.
+//   - currentWaybill empty: a plain update.
+//
+// Between the two requests the waybill is briefly unset, so a failure of the
+// second leaves the order without a waybill; the error says so.
+func (c *Client) UpdateOrderKeepWaybill(ctx context.Context, o UpdateOrder, currentWaybill string) error {
+	if o.WaybillNumber != "" || currentWaybill == "" {
+		return c.UpdateOrder(ctx, o)
+	}
+	if err := c.UpdateOrder(ctx, o); err != nil {
+		return err
+	}
+	if err := c.UpdateOrder(ctx, UpdateOrder{OrderNo: o.OrderNo, WaybillNumber: currentWaybill}); err != nil {
+		return fmt.Errorf("fez: order %s updated but re-attaching waybill %q failed: %w", o.OrderNo, currentWaybill, err)
+	}
+	return nil
+}
+
 // UpdateOrders updates several orders with one request each (the API has no
 // working batch form). It always attempts every order; Response maps orderNo to
 // "Order Successfully Updated" or the error text. The returned error is non-nil

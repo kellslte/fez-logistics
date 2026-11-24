@@ -138,6 +138,18 @@ func (m *mockFez) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "Order not found")
 			return
 		}
+		// verified sandbox quirks: waybill must be unique (even vs itself) and an
+		// update that omits it clears it
+		if wb, has := body["waybillNumber"].(string); has {
+			for _, o := range m.orders {
+				if o["waybillNumber"] == wb {
+					fail(w, 400, "The waybill number has already been taken.")
+					return
+				}
+			}
+		} else {
+			delete(m.orders[no], "waybillNumber")
+		}
 		for k, v := range body {
 			m.orders[no][k] = v
 		}
@@ -479,5 +491,36 @@ func TestMockWebhookEndToEnd(t *testing.T) {
 	}
 	if code := deliver("", ts); code != 401 {
 		t.Errorf("missing signature got %d", code)
+	}
+}
+
+func TestMockWaybillSurvivesUpdate(t *testing.T) {
+	_, c := newMock(t)
+	ctx := context.Background()
+	c.SetCredentials("TOK", "SK")
+	cr, _ := c.CreateOrders(ctx, []CreateOrder{{RecipientAddress: "a", RecipientState: "Lagos", RecipientName: "n", RecipientPhone: "1", UniqueID: "u", BatchID: "b", ValueOfItem: "1", Weight: 1, WaybillNumber: "wb1"}})
+	no := cr.OrderNos["u"]
+	// plain update clears the waybill (real-server behaviour)
+	c.UpdateOrder(ctx, UpdateOrder{OrderNo: no, RecipientName: "Changed"})
+	if _, err := c.SearchByWaybill(ctx, "wb1"); err == nil {
+		t.Fatal("expected plain update to clear waybill")
+	}
+	// keep-waybill update restores it
+	if err := c.UpdateOrderKeepWaybill(ctx, UpdateOrder{OrderNo: no, RecipientName: "Again"}, "wb1"); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := c.SearchByWaybill(ctx, "wb1"); err != nil || w.Data.OrderNumber != no {
+		t.Fatal(w, err)
+	}
+	// repeating it must still work (same waybill is "taken" until cleared)
+	if err := c.UpdateOrderKeepWaybill(ctx, UpdateOrder{OrderNo: no, RecipientName: "Third"}, "wb1"); err != nil {
+		t.Fatal(err)
+	}
+	// change to a new waybill in one request
+	if err := c.UpdateOrderKeepWaybill(ctx, UpdateOrder{OrderNo: no, WaybillNumber: "wb2"}, "wb1"); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := c.SearchByWaybill(ctx, "wb2"); err != nil || w.Data.OrderNumber != no {
+		t.Fatal(w, err)
 	}
 }

@@ -70,14 +70,19 @@ type CreateOrdersResponse struct {
 }
 
 // UpdateOrder updates recipient details of an existing order.
-// UpdateOrder: note (observed in the sandbox) a successful update clears the
-// order's waybill number, and re-sending it is rejected as already taken.
+// UpdateOrder updates an order by its Fez order number (the source of truth).
+//
+// Observed in the sandbox: a successful update WITHOUT WaybillNumber clears the
+// order's waybill number, and sending the unchanged current waybill in the same
+// request is rejected ("already taken"). Use Client.UpdateOrderKeepWaybill to
+// update and re-attach the waybill safely.
 type UpdateOrder struct {
 	OrderNo          string `json:"orderNo"`
 	RecipientAddress string `json:"recipientAddress,omitempty"`
 	RecipientState   string `json:"recipientState,omitempty"`
 	RecipientName    string `json:"recipientName,omitempty"`
 	RecipientPhone   string `json:"recipientPhone,omitempty"`
+	WaybillNumber    string `json:"waybillNumber,omitempty"`
 }
 
 type UpdateOrdersResponse struct {
