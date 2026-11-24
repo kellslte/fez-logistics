@@ -70,6 +70,8 @@ type CreateOrdersResponse struct {
 }
 
 // UpdateOrder updates recipient details of an existing order.
+// UpdateOrder: note (observed in the sandbox) a successful update clears the
+// order's waybill number, and re-sending it is rejected as already taken.
 type UpdateOrder struct {
 	OrderNo          string `json:"orderNo"`
 	RecipientAddress string `json:"recipientAddress,omitempty"`

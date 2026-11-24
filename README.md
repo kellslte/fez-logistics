@@ -30,4 +30,5 @@ Auth: Authenticate, Logout, ChangePassword · Orders: CreateOrders, UpdateOrders
 - Import sample misspells `qunatity`; the field table says `quantity` (used).
 
 ## Releasing
+
 `scripts/bump.sh patch|minor|major [--push]` runs vet+tests, updates `Version` in `version.go`, commits and tags `vX.Y.Z`. `fez.Version` is also sent in the `User-Agent`.

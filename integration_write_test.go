@@ -67,13 +67,13 @@ func TestSandboxWrite(t *testing.T) {
 		if tr, err := c.TrackOrder(ctx, orderNo); step("TrackOrder", err) {
 			t.Logf("track status=%s history=%d", tr.Order.OrderStatus, len(tr.History))
 		}
+		if w, err := c.SearchByWaybill(ctx, waybill); step("SearchByWaybill", err) && w.Data.OrderNumber != orderNo {
+			t.Errorf("waybill maps to %q want %q", w.Data.OrderNumber, orderNo)
+		}
 		_, err = c.UpdateOrders(ctx, []UpdateOrder{{OrderNo: orderNo, RecipientName: "Go Test Updated", RecipientPhone: "08011111111"}})
 		step("UpdateOrders", err)
 		if g, err := c.GetOrder(ctx, orderNo); err == nil && g.OrderDetails[0].RecipientName != "Go Test Updated" {
 			t.Errorf("update not reflected: %q", g.OrderDetails[0].RecipientName)
-		}
-		if w, err := c.SearchByWaybill(ctx, waybill); step("SearchByWaybill", err) && w.Data.OrderNumber != orderNo {
-			t.Errorf("waybill maps to %q want %q", w.Data.OrderNumber, orderNo)
 		}
 		if u, err := c.ManifestURL(ctx, orderNo); err != nil {
 			t.Logf("ManifestURL (may legitimately 404 until generated): %v", err)
@@ -101,19 +101,29 @@ func TestSandboxWrite(t *testing.T) {
 				step("CancelOrder(export)", c.CancelOrder(ctx, er.OrderNos[id], "sdk test"))
 			}
 		}
-		if il, err := c.ImportLocations(ctx); err == nil && len(il) > 0 {
+		if il, err := c.ImportLocations(ctx); err == nil {
 			cats, _ := c.ImportItemCategories(ctx)
 			if len(cats) > 0 {
-				id := run + "-i"
-				ir, err := c.CreateImportOrders(ctx, []ImportOrder{{RecipientAddress: "1 Import Rd", RecipientState: "Lagos", RecipientName: "Imp", RecipientPhone: "08000000000",
-					UniqueID: id, BatchID: "gotest-i-" + run, ValueOfItem: "20000", Weight: 1, ImportLocationID: il[0].ID, ItemCategory: cats[0].ID,
-					BusinessName: "Test Vendor", OrderID: "o-" + run, TrackingID: "t-" + run, Quantity: 1}})
-				if step("CreateImportOrders", err) {
+				created := false
+				for _, loc := range il {
+					id := run + "-i" + strconv.Itoa(loc.ID)
+					ir, err := c.CreateImportOrders(ctx, []ImportOrder{{RecipientAddress: "1 Import Rd", RecipientState: "Lagos", RecipientName: "Imp Test", RecipientPhone: "08000000000",
+						UniqueID: id, BatchID: "gotest-i-" + run, ValueOfItem: "20000", Weight: 1, ImportLocationID: loc.ID, ItemCategory: cats[0].ID,
+						BusinessName: "Test Vendor", OrderID: "o-" + run, TrackingID: "t-" + run, Quantity: 1}})
+					if err != nil {
+						t.Logf("CreateImportOrders loc %d (%s): %v", loc.ID, loc.Name, err)
+						continue
+					}
+					created = true
+					t.Logf("CreateImportOrders: ok via location %d (%s)", loc.ID, loc.Name)
 					step("CancelOrder(import)", c.CancelOrder(ctx, ir.OrderNos[id], "sdk test"))
+					break
+				}
+				if !created {
+					t.Error("no import location accepted an order")
 				}
 			}
 		}
-
 	}()
 
 	// --- lockers ---

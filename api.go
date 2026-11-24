@@ -3,6 +3,7 @@ package fez
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -55,9 +56,32 @@ func (c *Client) CreateOrders(ctx context.Context, orders []CreateOrder) (*Creat
 	return c.keepBody(&r, c.do(ctx, http.MethodPost, "/order", orders, &r, false))
 }
 
+// UpdateOrder updates one order. Verified against the sandbox: PUT /order takes
+// a single JSON object (the docs' array form is rejected with "order no field is required").
+func (c *Client) UpdateOrder(ctx context.Context, o UpdateOrder) error {
+	return c.do(ctx, http.MethodPut, "/order", o, nil, false)
+}
+
+// UpdateOrders updates several orders with one request each (the API has no
+// working batch form). It always attempts every order; Response maps orderNo to
+// "Order Successfully Updated" or the error text. The returned error is non-nil
+// if any order failed.
 func (c *Client) UpdateOrders(ctx context.Context, orders []UpdateOrder) (*UpdateOrdersResponse, error) {
-	var r UpdateOrdersResponse
-	return &r, c.do(ctx, http.MethodPut, "/order", orders, &r, false)
+	r := &UpdateOrdersResponse{Envelope: Envelope{Status: "Success", Description: "Update Batch Request Processed"}, Response: map[string]string{}}
+	var failed int
+	for _, o := range orders {
+		if err := c.UpdateOrder(ctx, o); err != nil {
+			failed++
+			r.Response[o.OrderNo] = err.Error()
+			continue
+		}
+		r.Response[o.OrderNo] = "Order Successfully Updated"
+	}
+	if failed > 0 {
+		r.Status = "Error"
+		return r, fmt.Errorf("fez: %d of %d order updates failed", failed, len(orders))
+	}
+	return r, nil
 }
 
 func (c *Client) DeleteOrder(ctx context.Context, orderNo string) error {

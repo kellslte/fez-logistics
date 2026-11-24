@@ -129,22 +129,19 @@ func (m *mockFez) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/orders/import" && want("POST"):
 		m.create(w, arr, "recipientAddress", "recipientState", "recipientName", "recipientPhone", "uniqueID", "BatchID", "valueOfItem", "weight", "importLocationId", "itemCategory", "businessName")
 	case p == "/order" && r.Method == "PUT":
-		res := map[string]string{}
-		for _, o := range arr {
-			if !need(o, "orderNo") {
-				return
-			}
-			no := o["orderNo"].(string)
-			if _, e := m.orders[no]; !e {
-				res[no] = "Order not found"
-				continue
-			}
-			for k, v := range o {
-				m.orders[no][k] = v
-			}
-			res[no] = "Order Successfully Updated"
+		// verified against the real sandbox: single object, not an array
+		if !need(body, "orderNo") {
+			return
 		}
-		reply(w, 201, map[string]any{"status": "Success", "description": "Update Batch Request Processed", "Response": res})
+		no := body["orderNo"].(string)
+		if _, e := m.orders[no]; !e {
+			fail(w, 400, "Order not found")
+			return
+		}
+		for k, v := range body {
+			m.orders[no][k] = v
+		}
+		ok(w, map[string]any{"description": "Order Successfully Updated"})
 	case p == "/order" && r.Method == "DELETE":
 		if need(body, "orderNo") {
 			delete(m.orders, body["orderNo"].(string))
