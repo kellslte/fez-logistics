@@ -41,10 +41,16 @@ func TestSandboxSession(t *testing.T) {
 		t.Logf("RegisterWebhook ok: %+v", r.Data)
 	}
 
+	c.mu.RLock()
+	oldTok, sk := c.token, c.secretKey
+	c.mu.RUnlock()
 	if err := c.Logout(ctx, ""); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
 	t.Log("Logout ok")
+	// Logout drops the token client-side; resend the old one to prove the
+	// server rejects it (Logout also forgot the credentials, so no re-login).
+	c.SetCredentials(oldTok, sk)
 	if _, err := c.Users(ctx); err == nil {
 		t.Error("token still accepted after Logout")
 	} else {

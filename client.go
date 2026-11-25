@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,6 +71,14 @@ type Client struct {
 	secretKey string
 	expires   string
 	userID    string
+
+	// Auto-login credentials, guarded by mu. Set by WithAutoLogin or by a
+	// successful Authenticate. loginMu serialises re-logins so concurrent 401s
+	// trigger one /user/authenticate call, not one each.
+	loginID, loginPW string
+	loginPinned      bool // set via WithAutoLogin: survives Logout
+	noAutoLogin      bool // WithoutAutoLogin
+	loginMu          sync.Mutex
 }
 
 // Option configures a Client.
@@ -97,6 +106,25 @@ func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h
 func WithCredentials(token, secretKey string) Option {
 	return func(c *Client) { c.token, c.secretKey = token, secretKey }
 }
+
+// Session handling is automatic. Fez has no refresh-token endpoint; logging in
+// again is the only way to renew a session. So after a successful
+// Authenticate the client keeps the credentials in memory, and when a call gets
+// HTTP 401 (expired token) it logs in again once and retries that call.
+// Concurrent 401s share one login, keeping well under Fez's 60 logins/minute.
+// Retrying is safe for order creation: a 401 is returned before Fez processes
+// the request.
+
+// WithAutoLogin supplies the credentials up front, so you never call
+// Authenticate: the client logs in before its first authenticated call. Unlike
+// credentials remembered from Authenticate, these survive Logout.
+func WithAutoLogin(userID, password string) Option {
+	return func(c *Client) { c.loginID, c.loginPW, c.loginPinned = userID, password, true }
+}
+
+// WithoutAutoLogin disables automatic re-login: the password is never kept in
+// memory and an expired token surfaces as a 401 *APIError.
+func WithoutAutoLogin() Option { return func(c *Client) { c.noAutoLogin = true } }
 
 // New returns a client targeting Sandbox unless WithEnvironment/WithBaseURL say otherwise.
 func New(opts ...Option) *Client {
@@ -143,18 +171,60 @@ type Envelope struct {
 
 // do sends a request. body (if non-nil) is JSON-encoded. When query is true the
 // body fields are ALSO sent as URL query parameters (for GET endpoints the docs
-// describe with a request body).
+// describe with a request body). When login credentials are known it also logs
+// in on demand and retries once after a 401.
 func (c *Client) do(ctx context.Context, method, path string, body, out any, query bool) error {
 	if c.cfgErr != nil {
 		return c.cfgErr
 	}
-	var rdr io.Reader
 	var raw []byte
 	if body != nil {
 		var err error
 		if raw, err = json.Marshal(body); err != nil {
 			return err
 		}
+	}
+	c.mu.RLock()
+	auto := c.loginID != "" && !c.noAutoLogin && path != "/user/authenticate" && path != "/states"
+	empty := c.token == ""
+	c.mu.RUnlock()
+	if auto {
+		if empty {
+			if err := c.relogin(ctx, ""); err != nil {
+				return err
+			}
+		}
+	}
+	used, err := c.send(ctx, method, path, raw, body != nil, out, query)
+	var ae *APIError
+	if auto && errors.As(err, &ae) && ae.HTTPStatus == http.StatusUnauthorized {
+		if lerr := c.relogin(ctx, used); lerr != nil {
+			return fmt.Errorf("fez: re-login after 401 failed: %w (original: %v)", lerr, err)
+		}
+		_, err = c.send(ctx, method, path, raw, body != nil, out, query)
+	}
+	return err
+}
+
+// relogin authenticates with the stored credentials unless another
+// goroutine already replaced staleToken while we waited for the lock.
+func (c *Client) relogin(ctx context.Context, staleToken string) error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	c.mu.RLock()
+	cur, id, pw := c.token, c.loginID, c.loginPW
+	c.mu.RUnlock()
+	if cur != "" && cur != staleToken {
+		return nil
+	}
+	_, err := c.Authenticate(ctx, id, pw)
+	return err
+}
+
+// send performs one HTTP round trip and returns the bearer token it used.
+func (c *Client) send(ctx context.Context, method, path string, raw []byte, hasBody bool, out any, query bool) (string, error) {
+	var rdr io.Reader
+	if hasBody {
 		rdr = bytes.NewReader(raw)
 	}
 	u := c.baseURL + path
@@ -170,16 +240,17 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, que
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, rdr)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "fez-logistics-go/"+Version)
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	c.mu.RLock()
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	token := c.token
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if c.secretKey != "" {
 		req.Header.Set("secret-key", c.secretKey)
@@ -188,22 +259,22 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, que
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return token, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return token, err
 	}
 	var env Envelope
 	_ = json.Unmarshal(data, &env)
 	if resp.StatusCode >= 300 || env.Status == "Error" {
-		return &APIError{HTTPStatus: resp.StatusCode, Description: env.Description, Body: string(data)}
+		return token, &APIError{HTTPStatus: resp.StatusCode, Description: env.Description, Body: string(data)}
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("fez: decode response: %w", err)
+			return token, fmt.Errorf("fez: decode response: %w", err)
 		}
 	}
-	return nil
+	return token, nil
 }

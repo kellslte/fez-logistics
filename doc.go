@@ -7,6 +7,21 @@
 //	if _, err := c.Authenticate(ctx, email, password); err != nil { ... }
 //	res, err := c.CreateOrders(ctx, []fez.CreateOrder{{...}})
 //
+// Sessions renew automatically: Fez has no refresh token, so after a
+// successful Authenticate the client keeps the credentials and logs in again
+// when a call gets 401. WithAutoLogin supplies credentials up front (no
+// Authenticate call needed); WithoutAutoLogin opts out.
+//
+//	c := fez.New(fez.WithAutoLogin(email, password))
+//
+// # Billing (confirmed by Fez support)
+//
+// Order cost is deducted from the business wallet when the order is created,
+// unless the organisation is approved for Pay Later (monthly invoicing). The API
+// cannot fund the wallet, read its balance or pay "Pending Payment" orders; use
+// the Fez Business Portal. Cancellation refunds 100% before pick-up, 50% after
+// pick-up but before a delivery attempt, and nothing after an attempt.
+//
 // # Behaviour verified against the real sandbox (differs from Fez's docs)
 //
 //   - PUT /order takes ONE order object, not an array; UpdateOrders therefore

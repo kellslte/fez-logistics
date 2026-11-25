@@ -3,6 +3,7 @@ package fez
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -77,4 +78,51 @@ func TestSandboxReadOnly(t *testing.T) {
 	check("OrderStats", err)
 	_, err = c.Lockers(ctx, "Lagos")
 	check("Lockers", err)
+}
+
+// Read-only: proves automatic re-login against the real sandbox by replacing
+// the token with a dead one and checking the next call still succeeds.
+func TestSandboxAutoRelogin(t *testing.T) {
+	loadEnv()
+	uid, pw := os.Getenv("FEZ_USER_ID"), os.Getenv("FEZ_PASSWORD")
+	if uid == "" || pw == "" {
+		t.Skip("FEZ_USER_ID/FEZ_PASSWORD not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	c := New()
+	if _, err := c.Authenticate(ctx, uid, pw); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.RLock()
+	good, sk := c.token, c.secretKey
+	c.mu.RUnlock()
+	c.SetCredentials("EXPIRED-"+good, sk)
+	if _, err := c.Users(ctx); err != nil {
+		t.Fatalf("call with dead token was not recovered: %v", err)
+	}
+	c.mu.RLock()
+	renewed := c.token
+	c.mu.RUnlock()
+	if renewed == "" || renewed == "EXPIRED-"+good {
+		t.Fatalf("token not renewed: %q", renewed)
+	}
+	t.Log("dead token rejected, client re-logged in and retried")
+
+	// Lazy login via WithAutoLogin, no Authenticate call.
+	if _, err := New(WithAutoLogin(uid, pw)).Users(ctx); err != nil {
+		t.Fatalf("WithAutoLogin lazy login: %v", err)
+	}
+
+	// Opt-out still surfaces the 401.
+	c2 := New(WithoutAutoLogin())
+	if _, err := c2.Authenticate(ctx, uid, pw); err != nil {
+		t.Fatal(err)
+	}
+	c2.SetCredentials("EXPIRED-"+good, sk)
+	var ae *APIError
+	if _, err := c2.Users(ctx); !errors.As(err, &ae) || ae.HTTPStatus != 401 {
+		t.Fatalf("WithoutAutoLogin: want 401, got %v", err)
+	}
 }

@@ -23,11 +23,13 @@ type mockFez struct {
 	status map[string]string
 	n      int
 	hook   string
-	wallet bool // true = funded
+	wallet bool   // true = funded
+	tok    string // currently valid bearer token; change it to simulate expiry
+	logins int    // successful /user/authenticate calls
 }
 
 func newMock(t *testing.T) (*mockFez, *Client) {
-	m := &mockFez{t: t, orders: map[string]map[string]any{}, status: map[string]string{}, wallet: true}
+	m := &mockFez{t: t, orders: map[string]map[string]any{}, status: map[string]string{}, wallet: true, tok: "TOK"}
 	srv := httptest.NewServer(m)
 	t.Cleanup(srv.Close)
 	return m, New(WithBaseURL(srv.URL))
@@ -60,8 +62,9 @@ func (m *mockFez) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 401, "bad login")
 			return
 		}
+		m.logins++
 		ok(w, map[string]any{
-			"authDetails": map[string]any{"authToken": "TOK", "expireToken": "2030-01-01 00:00:00"},
+			"authDetails": map[string]any{"authToken": m.tok, "expireToken": "2030-01-01 00:00:00"},
 			"userDetails": map[string]any{"userID": "G-1", "Full Name": "A", "Username": "Admin"},
 			"orgDetails":  map[string]any{"secret-key": "SK", "Org Full Name": "Org"}})
 		return
@@ -71,7 +74,7 @@ func (m *mockFez) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 401, "Organization Secret Key is Required")
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer TOK" {
+		if r.Header.Get("Authorization") != "Bearer "+m.tok {
 			fail(w, 401, "Invalid session")
 			return
 		}

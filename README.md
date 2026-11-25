@@ -86,6 +86,33 @@ c := fez.New(fez.WithEnvironment(env))
 | `WithBaseURL(url)` | Override the URL (proxy, test server). Wins over `WithEnvironment` in any order. |
 | `WithHTTPClient(hc)` | Custom `*http.Client` (default timeout 30s). |
 | `WithCredentials(token, secret)` | Reuse a stored token. Tokens expire — see `c.TokenExpiry()`. |
+| `WithAutoLogin(userID, password)` | Give credentials up front: the client logs in on first use, so no `Authenticate` call is needed. These credentials survive `Logout`. |
+| `WithoutAutoLogin()` | Opt out of automatic re-login. The password is never kept in memory, and expired tokens return `401`. |
+
+### Sessions
+
+Fez has no refresh token. A session is renewed by calling `/user/authenticate` again (confirmed by Fez support), which is limited to **60 requests/minute**. `/user/logout` invalidates the active token.
+
+**Sessions renew automatically by default.** After a successful `Authenticate`, the client keeps the login in memory. When a call gets `401` (expired token), it logs in again once and retries the call. Concurrent 401s share one login.
+
+```go
+c := fez.New(fez.WithEnvironment(fez.Production))
+c.Authenticate(ctx, os.Getenv("FEZ_USER_ID"), os.Getenv("FEZ_PASSWORD"))
+// Hours later: the expired token is renewed transparently.
+res, err := c.CreateOrders(ctx, orders)
+
+// Or skip Authenticate entirely:
+c = fez.New(fez.WithAutoLogin(os.Getenv("FEZ_USER_ID"), os.Getenv("FEZ_PASSWORD")))
+```
+
+| Event | Effect on the stored login |
+|---|---|
+| Failed `Authenticate` | Nothing is stored |
+| `ChangePassword` for your own user | Stored password updated to the new one |
+| `Logout` | Token dropped. Credentials remembered from `Authenticate` are forgotten, so later calls return `401` until you log in again. `WithAutoLogin` credentials are kept. |
+| `WithoutAutoLogin()` | Nothing is stored. Handle `401 Invalid session` yourself. |
+
+Use one long-lived `*Client` per credential set. Building a new client per request logs in every time and can hit the rate limit.
 
 > Sandbox and production credentials are **separate**. Authenticate again after changing environment.
 
@@ -103,11 +130,11 @@ Everything below was observed against the **real sandbox** and in several places
 | 6 | `recipientName` must be **≥ 5 characters** (also on update). | Server validation error surfaces as `*APIError`. | Validate in your UI. |
 | 7 | Failed order creation returns **HTTP 400** with per-order reasons in `orderNos` (e.g. *"Insufficient wallet balance"*) plus `duplicateUniqueIds`. | Create calls return **both** the response and the `*APIError`. | Inspect `res.OrderNos` on error. |
 | 8 | Import location **1 (Niger)** has no price → *"Price not available at this time"*. Other locations work. | — | Call `ImportDeliveryCost` first; hide unpriced locations. |
-| 9 | International orders cost far more than local ones (sandbox: export ≈ ₦75,800, local Lagos ≈ ₦1,762). | — | Check wallet balance before creating export orders. |
+| 9 | International orders cost far more than local ones (sandbox: export ≈ ₦75,800, local Lagos ≈ ₦1,762). | — | Make sure the wallet covers export orders before creating them. As of 25 Nov 2026 the sandbox rejects export creation with *"Export order creation is currently unavailable."* (per order, HTTP 400). |
 | 10 | `DeliveryCost` returns `cost` **and** `Cost` (same data) plus `vat`, `surcharge`, `totalCost`. The amount charged is `totalCost`. | `CostResponse.TotalCost`, `StateCost()` helper. | Show `TotalCost` to customers, not `cost`. |
 | 11 | `DeliveryTimeEstimate` works with params in the query string **and** body; `ExportDeliveryCost` is documented as GET with a body. | Both are sent in query + body. | — |
 | 12 | `ManifestURL` returns 404 *"Manifest is not available"* until Fez generates one. | Returned as `*APIError`. | Treat 404 as "not yet". |
-| 13 | Orders can only be cancelled while `Pending Pick-Up`, `Pending Payment`, `Pending Drop-off`, `Dropped-off`, `Rejected At Drop-off` or `Failed Pick-Up`. Cancelling refunds the business wallet. | `CancelOrder` | Handle the 400 for later statuses. |
+| 13 | Orders can only be cancelled while `Pending Pick-Up`, `Pending Payment`, `Pending Drop-off`, `Dropped-off`, `Rejected At Drop-off` or `Failed Pick-Up`. Cancelling refunds the business wallet, **in full only before pick-up** (see [Billing](#billing)). | `CancelOrder` | Handle the 400 for later statuses. |
 | 14 | **The webhook URL shown on the dashboard is separate from the one `RegisterWebhook` sets.** After a successful API registration the sandbox dashboard still showed the old URL. | — | Set and confirm the URL **in the dashboard**; treat `RegisterWebhook` as unproven until a delivery is seen. |
 | 15 | Money and weight fields arrive as strings **or** numbers. | `fez.Number` (= `json.Number`) decodes both. | Use `.String()`/`.Float64()`. |
 
@@ -119,6 +146,22 @@ Everything below was observed against the **real sandbox** and in several places
 | Production | No production calls have been made by the test-suite. |
 | `ChangePassword` | Mock-tested only (it would change the sandbox password). |
 | `ManifestURL` success body | Only the 404 path was seen live. |
+
+## Billing
+
+Confirmed by Fez support (November 2026):
+
+- **Orders are paid from the business wallet.** The delivery cost is deducted **when the order is created**. If the wallet is short, `CreateOrders` fails for that order with *"Insufficient wallet balance"*.
+- **The API cannot take payments.** There is no endpoint to pay for an order, fund the wallet or read its balance. Fund the wallet in the [Fez Business Portal](https://businessportal.fezdelivery.co).
+- **Pay Later** (monthly invoicing on an agreed billing cycle) is the only alternative to a funded wallet. Fez's Business team must approve it per organisation. The API calls stay the same.
+- **`Pending Payment` / `paymentStatus: "unpaid"`** means the order was created but payment did not complete. It can only be retried from the Business Portal dashboard, not through the API. It can still be cancelled with `CancelOrder`.
+- **Refunds on cancellation** depend on the delivery stage:
+
+| Stage when cancelled | Refund to wallet |
+|---|---|
+| Not yet picked up | 100% |
+| Picked up, delivery not yet attempted | 50% |
+| Delivery already attempted | None |
 
 ## Orders
 
@@ -190,8 +233,8 @@ if errors.As(err, &ae) {
 | HTTP | Typical `Description` | Meaning |
 |---|---|---|
 | 401 | `Organization Secret Key is Required` | Missing `secret-key` |
-| 401 | `Invalid session` | Missing/expired/logged-out token → `Authenticate` again |
-| 400 | `Error creating orders` | See `res.OrderNos[uniqueID]`, e.g. `Insufficient wallet balance…` |
+| 401 | `Invalid session` | Missing/expired/logged-out token → renewed automatically after `Authenticate`/`WithAutoLogin`. You only see it after `Logout`, with `WithoutAutoLogin`, or if re-login fails. |
+| 400 | `Error creating orders` | See `res.OrderNos[uniqueID]`, e.g. `Insufficient wallet balance…` → fund the wallet in the Business Portal |
 | 400 | `The … field …` | Validation (name length, taken waybill, …) |
 | 404 | `Order not found.` / `Price not available at this time` | Unknown id / unpriced route |
 | 422 | `The … field is required.` | Missing field |
@@ -274,7 +317,9 @@ If you are an AI coding assistant integrating this package, follow these rules:
 6. Show customers `DeliveryCost(...).TotalCost`, not `.cost`.
 7. Do not trust webhook signatures as the only signal yet (see [verification status](#not-yet-verified-against-real-fez-traffic)); reconcile with `TrackOrder`.
 8. Validate `recipientName` ≥ 5 characters, and Nigerian state names against `States()`.
-9. Call `Authenticate` again on `401 Invalid session`; tokens expire (`TokenExpiry()`).
+9. Sessions renew themselves; do not add your own re-login or retry-on-401 logic. Reuse one long-lived client, because logins are limited to 60/minute.
+10. Do not build payment or wallet-funding flows on this API: none exist. On *"Insufficient wallet balance"*, tell an operator to fund the wallet in the Business Portal (or use Pay Later). `Pending Payment` orders are retried in the portal.
+11. Cancellation refunds are 100% before pick-up, 50% after pick-up and before a delivery attempt, and 0% after one. Do not promise full refunds.
 
 ## License
 

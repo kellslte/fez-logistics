@@ -12,7 +12,9 @@ func esc(s string) string { return url.PathEscape(s) }
 
 // ---- Auth ----
 
-// Authenticate logs in and stores the bearer token and secret key on the client.
+// Authenticate logs in and stores the bearer token and secret key on the
+// client. It also remembers userID and password so the client can log in again
+// by itself when the token expires (see WithoutAutoLogin to opt out).
 func (c *Client) Authenticate(ctx context.Context, userID, password string) (*AuthResponse, error) {
 	var r AuthResponse
 	err := c.do(ctx, http.MethodPost, "/user/authenticate",
@@ -22,6 +24,9 @@ func (c *Client) Authenticate(ctx context.Context, userID, password string) (*Au
 	}
 	c.mu.Lock()
 	c.token, c.secretKey, c.expires, c.userID = r.AuthDetails.AuthToken, r.OrgDetails.SecretKey, r.AuthDetails.ExpireToken, r.UserDetails.UserID
+	if !c.noAutoLogin {
+		c.loginID, c.loginPW = userID, password
+	}
 	c.mu.Unlock()
 	return &r, nil
 }
@@ -29,24 +34,48 @@ func (c *Client) Authenticate(ctx context.Context, userID, password string) (*Au
 // Logout invalidates the session. userID is the internal id returned by
 // Authenticate (UserDetails.UserID, e.g. "G-xxxx-xxxx"), NOT the login
 // identifier you authenticated with. Pass "" to use the one stored by Authenticate.
+//
+// Logout ends the session: the client forgets the token and the credentials
+// remembered from Authenticate, so later calls 401 instead of silently logging
+// back in. Credentials given via WithAutoLogin are kept.
 func (c *Client) Logout(ctx context.Context, userID string) error {
 	if userID == "" {
 		c.mu.RLock()
 		userID = c.userID
 		c.mu.RUnlock()
 	}
-	return c.do(ctx, http.MethodPost, "/user/logout", map[string]string{"user_id": userID}, nil, false)
+	if err := c.do(ctx, http.MethodPost, "/user/logout", map[string]string{"user_id": userID}, nil, false); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.token, c.expires = "", ""
+	if !c.loginPinned {
+		c.loginID, c.loginPW = "", ""
+	}
+	c.mu.Unlock()
+	return nil
 }
 
 // ChangePassword: userID is the internal id (see Logout); "" uses the stored one.
+// On success, if it changed this client's own user, the stored auto-login
+// password is updated to newPassword.
 func (c *Client) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
+	c.mu.RLock()
+	self := userID == "" || userID == c.userID
 	if userID == "" {
-		c.mu.RLock()
 		userID = c.userID
-		c.mu.RUnlock()
 	}
-	return c.do(ctx, http.MethodPost, "/user/changePassword", map[string]string{
-		"user_id": userID, "oldPassword": oldPassword, "newPassword": newPassword}, nil, false)
+	c.mu.RUnlock()
+	if err := c.do(ctx, http.MethodPost, "/user/changePassword", map[string]string{
+		"user_id": userID, "oldPassword": oldPassword, "newPassword": newPassword}, nil, false); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if self && c.loginPW != "" {
+		c.loginPW = newPassword
+	}
+	c.mu.Unlock()
+	return nil
 }
 
 // ---- Orders ----
